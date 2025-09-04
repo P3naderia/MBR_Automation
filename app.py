@@ -603,9 +603,9 @@ def main():
     with st.expander("📋 사용법 안내"):
         st.markdown("""
         ### 사용 방법
-        1. **데이터 준비**: Amazon Business 데이터를 CSV 또는 Excel 형식으로 준비
+        1. **데이터 준비**: Quicksight MBR Dashboard -> raw data (CID, ASIN) 다운로드 
         2. **파일 업로드**: 위의 파일 업로더를 사용하여 데이터 파일 업로드
-        3. **템플릿 업로드** (선택): PowerPoint 템플릿이 있다면 함께 업로드
+        3. **템플릿 업로드** : PowerPoint 템플릿이 있다면 함께 업로드
         4. **옵션 선택**: 생성할 그래프 및 분석 옵션 선택
         5. **분석 실행**: '분석 시작' 버튼 클릭
         6. **결과 다운로드**: 생성된 그래프와 보고서를 다운로드
