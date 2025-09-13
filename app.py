@@ -29,7 +29,8 @@ PALETTE = {
     "purple": "#9B51E0", "red": "#EB5757", "gray": "#BDBDBD", "dark": "#4F4F4F",
     "sp_fill": "#A9CEF8", "sb_fill": "#FAD4AD", "sd_fill": "#DCC4F6", "ba_fill": "#BFD3F2",
 }
-TOPCAT_METRICS = {}  # 그래프11에서 채움
+TOPCAT_METRICS = {}   # 그래프11에서 채움
+TOPASIN_METRICS = {}  # Top1/Top2 ASIN 텍스트 마커용  ← 추가
 GRAPH_ROOT: Optional[str] = None  # 세션 임시 작업폴더
 
 # =========================
@@ -39,7 +40,7 @@ st.set_page_config(page_title="MBR PPT 자동 생성기 (3파일 업로드)", la
 st.title("📊 MBR PowerPoint 자동 생성기")
 st.markdown("""
 1) **CID 레벨 CSV/XLSX**, 2) **ASIN 레벨 CSV/XLSX**, 3) **PPT 템플릿(.pptx)** 을 업로드하세요.  
-버튼을 누르면 **그래프(1~12, 18~24) 생성 → 템플릿의 '그래프n' 자리 자동 삽입 → 텍스트/표 마커 치환 + YTD 테이블 채움 → 완성 PPT 다운로드**까지 자동 처리합니다.
+버튼을 누르면 **그래프(1~12, 16~17, 18~24) 생성 → 템플릿의 '그래프n' 자리 자동 삽입 → 텍스트/표 마커 치환 + YTD 테이블 채움 → 완성 PPT 다운로드**까지 자동 처리합니다.
 """)
 
 # =========================
@@ -256,6 +257,7 @@ def _format_by_marker(key, metrics):
     if key == "gcpb":  return f"{metrics['gcpb']:.1f}" if not pd.isna(metrics["gcpb"]) else "N/A"
     return "N/A"
 
+# ---------- (카테고리 텍스트 마커: 기존 유지) ----------
 def _get_topcat_text_marker(marker):
     s = marker.lower().replace(" ", "")
     if "top1category" in s:      return TOPCAT_METRICS.get("top1_category", "N/A")
@@ -266,8 +268,106 @@ def _get_topcat_text_marker(marker):
     if "top2gmsgrowth" in s:     return fmt_pct(TOPCAT_METRICS.get("top2_growth", np.nan))
     return None
 
+# ---------- (ASIN 텍스트 마커: 추가) ----------
+def _norm_colname(s: str) -> str:
+    return str(s).lower().replace(" ", "").replace("/", "")
+
+def _get_col_any(df, *names):
+    """df에서 여러 이름 후보 중 존재하는 실제 컬럼명을 찾아 반환(대소문자/공백/슬래시 무시)"""
+    norm_map = {_norm_colname(c): c for c in df.columns}
+    for nm in names:
+        key = _norm_colname(nm)
+        if key in norm_map:
+            return norm_map[key]
+    raise KeyError(f"columns not found among: {names}")
+
+def _fmt_or_na(v, dec=1):
+    return "N/A" if pd.isna(v) else f"{float(v):.{dec}f}"
+
+def compute_topasin_metrics(df_asin, df_cid):
+    """
+    최신월(anchor) 기준 Top1/Top2 Child ASIN을 찾고
+    - ASIN 코드
+    - 매출 비중(해당월 Top 전체 대비 %)
+    - MoM 성장률(해당 ASIN GMS 기준)
+    을 TOPASIN_METRICS에 저장.
+    """
+    global TOPASIN_METRICS
+    TOPASIN_METRICS = {}
+
+    if "Month" not in df_asin.columns:
+        return
+    da = df_asin.copy()
+    da["Month"] = pd.to_datetime(da["Month"], errors="coerce")
+    da = da.dropna(subset=["Month"])
+    if da.empty:
+        return
+
+    asin_col = _get_col_any(da, "ASIN", "Child ASIN", "ChildASIN")
+    gms_col  = _get_col_any(da, "GMS")
+
+    # 앵커월: CID 최신월 우선, 없으면 ASIN 최신월
+    try:
+        anchor_dt = pd.to_datetime(df_cid["Month"], errors="coerce").max()
+        if pd.isna(anchor_dt):
+            anchor_dt = da["Month"].max()
+    except Exception:
+        anchor_dt = da["Month"].max()
+
+    cur = da[da["Month"].dt.to_period("M") == anchor_dt.to_period("M")]
+    if cur.empty:
+        cur = da
+        anchor_dt = da["Month"].max()
+
+    total_gms = float(cur[gms_col].sum())
+    prev_dt = (anchor_dt - pd.offsets.MonthBegin(1))
+
+    top = (cur.groupby(asin_col, dropna=False)[gms_col]
+             .sum()
+             .sort_values(ascending=False))
+    asins = [str(x) for x in top.index.tolist()[:2]]
+
+    for rank, asin in enumerate(asins, start=1):
+        cur_gms  = float(cur[cur[asin_col]==asin][gms_col].sum())
+        prev_gms = float(da[(da[asin_col]==asin) &
+                            (da["Month"].dt.to_period("M")==prev_dt.to_period("M"))][gms_col].sum())
+        portion  = (cur_gms/total_gms*100) if total_gms>0 else np.nan
+        growth   = safe_pct(cur_gms, prev_gms)
+
+        TOPASIN_METRICS[f"top{rank}_asin"]    = asin
+        TOPASIN_METRICS[f"top{rank}_portion"] = portion
+        TOPASIN_METRICS[f"top{rank}_growth"]  = growth
+
+def _get_topasin_text_marker(marker: str):
+    """
+    PPT 마커 치환:
+      {Top1 ASIN} / {Top2 ASIN}
+      {Top1 ASIN portion} / {Top2 ASIN portion}        -> 12.3   (숫자만)
+      {Top1 ASIN growth}  / {Top2 ASIN growth}         -> 3.1    (절대값 숫자만)
+    퍼센트 자동 포함 버전:
+      {Top1 ASIN portion%} / {Top1 ASIN growth%}       -> "12.3%" / "-3.1%"
+    """
+    s = marker.lower().strip().replace(" ", "")
+    for r in (1, 2):
+        if s == f"top{r}asin":
+            return TOPASIN_METRICS.get(f"top{r}_asin", "N/A")
+        if s == f"top{r}asinportion":
+            return _fmt_or_na(TOPASIN_METRICS.get(f"top{r}_portion", np.nan))
+        if s == f"top{r}asingrowth":
+            g = TOPASIN_METRICS.get(f"top{r}_growth", np.nan)
+            return _fmt_or_na(abs(g))
+        if s == f"top{r}asinportion%":
+            return fmt_pct(TOPASIN_METRICS.get(f"top{r}_portion", np.nan))
+        if s == f"top{r}asingrowth%":
+            return fmt_pct(TOPASIN_METRICS.get(f"top{r}_growth", np.nan))
+    return None
+
 def extract_value(df, marker):
-    # Top1/Top2 텍스트 마커 우선 처리
+    # 1) Top1/Top2 ASIN 텍스트 마커 먼저 처리  ← 추가
+    val_asin = _get_topasin_text_marker(marker)
+    if val_asin is not None:
+        return val_asin
+    # 2) 기존 Top1/Top2 카테고리 텍스트 마커
     val_top = _get_topcat_text_marker(marker)
     if val_top is not None:
         return val_top
@@ -1102,6 +1202,107 @@ def create_graph12_top1_category_trends(df_asin, df_cid, graph_name="Graph 12"):
     return _save_fig(fig, graph_name)
 
 # =========================
+# 그래프 16/17: Top1/Top2 Child ASIN 대시보드 (추가)
+# =========================
+def create_graph_asin_trends(df_asin, asin_value, rank_num=1, graph_name="Graph 16"):
+    d = df_asin.copy()
+    d["Month"] = pd.to_datetime(d["Month"], errors="coerce")
+    d = d.dropna(subset=["Month"])
+    asin_col  = _get_col_any(d, "ASIN", "Child ASIN", "ChildASIN")
+    gms_col   = _get_col_any(d, "GMS")
+    gv_col    = _get_col_any(d, "GV")
+    units_col = _get_col_any(d, "Units")
+
+    sub = d[d[asin_col] == asin_value].copy()
+    if sub.empty:
+        return None
+    sub["year"]  = sub["Month"].dt.year
+    sub["month"] = sub["Month"].dt.month
+
+    agg = (sub.groupby(["year","month"])
+              .agg(GMS=(gms_col,"sum"),
+                   GV=(gv_col,"sum"),
+                   Units=(units_col,"sum"))
+              .reset_index())
+    if agg.empty:
+        return None
+
+    agg["ASP"] = np.where(agg["Units"]>0, agg["GMS"]/agg["Units"], np.nan)
+    agg["CR"]  = np.where(agg["GV"]>0,    agg["Units"]/agg["GV"]*100, np.nan)
+    agg = finalize_year_month(agg, "year", "month")
+
+    _set_korean_font_if_possible()
+    fig, axes = plt.subplots(2,3, figsize=(19.2,10.8))
+    fig.patch.set_facecolor("white")
+
+    banner = fig.add_axes([0, 0.93, 1, 0.07])
+    banner.set_facecolor("#0F6CBD"); banner.set_xticks([]); banner.set_yticks([])
+    banner.text(0.5, 0.5, f"Top{rank_num} Child ASIN 주요 지표 트렌드  •  {asin_value}",
+                ha="center", va="center", color="white", fontsize=18, fontweight="bold")
+
+    def draw_metric(ax, dfm, col, title, yfmt="raw", dec=1):
+        _bi_theme(ax)
+        years = sorted(dfm["year"].unique())
+        if not years: 
+            return
+        hi_year = max(years)
+        colors = {y: ("#F2B233" if y==hi_year else "#BDBDBD") for y in years}
+        for y in years:
+            suby = dfm[dfm["year"]==y].sort_values("month")
+            x = suby["month"].to_numpy(); yv = suby[col].to_numpy()
+            ax.plot(x, yv, marker="o", linewidth=2.2, color=colors[y], label=str(y))
+            if y==hi_year and len(yv)>0 and pd.notna(yv[-1]):
+                if yfmt=="k":   txt = f"{yv[-1]/1000:.1f}K"
+                elif yfmt=="pct": txt = f"{yv[-1]:.{dec}f}%"
+                else:           txt = f"{yv[-1]:.{dec}f}"
+                _label_last(ax, x, yv, txt, dy=8)
+        ax.set_title(title, fontsize=14, color=PALETTE["dark"])
+        ax.set_xticks(range(1,13)); ax.set_xlim(1,12)
+        if yfmt=="k":   ax.yaxis.set_major_formatter(_yfmt_k(dec))
+        elif yfmt=="pct": ax.yaxis.set_major_formatter(_yfmt_decimal(dec, "%"))
+        else:           ax.yaxis.set_major_formatter(_yfmt_decimal(dec, ""))        
+        ax.legend(loc="upper left", fontsize=9, frameon=False)
+
+    draw_metric(axes[0,0], agg, "GMS",   "매출",        yfmt="k",   dec=1)
+    draw_metric(axes[0,1], agg, "GV",    "고객 유입",   yfmt="k",   dec=1)
+    draw_metric(axes[0,2], agg, "Units", "판매 수량",   yfmt="k",   dec=1)
+    draw_metric(axes[1,0], agg, "ASP",   "평균 판매 가격", yfmt="raw", dec=2)
+    draw_metric(axes[1,1], agg, "CR",    "구매 전환율", yfmt="pct", dec=1)
+    axes[1,2].axis("off")
+
+    fig.tight_layout(rect=[0,0,1,0.93])
+    return _save_fig(fig, graph_name)
+
+def build_top12_asin_graphs(df_asin, df_cid, top_n=2):
+    try:
+        anchor_dt = pd.to_datetime(df_cid["Month"], errors="coerce").max()
+    except Exception:
+        anchor_dt = pd.to_datetime(df_asin["Month"], errors="coerce").max()
+
+    da = df_asin.copy()
+    da["Month"] = pd.to_datetime(da["Month"], errors="coerce")
+    da = da.dropna(subset=["Month"])
+    asin_col = _get_col_any(da, "ASIN", "Child ASIN", "ChildASIN")
+    gms_col  = _get_col_any(da, "GMS")
+
+    cur = da[da["Month"].dt.to_period("M")==anchor_dt.to_period("M")]
+    if cur.empty: cur = da
+
+    top = (cur.groupby(asin_col, dropna=False)[gms_col]
+             .sum()
+             .sort_values(ascending=False)
+             .head(top_n))
+    asins = [str(x) for x in top.index.tolist()]
+    marker_map = {}
+    if len(asins) >= 1:
+        p1 = create_graph_asin_trends(df_asin, asins[0], rank_num=1, graph_name="Graph 16")
+        if p1: marker_map["그래프16"] = p1
+    if len(asins) >= 2:
+        p2 = create_graph_asin_trends(df_asin, asins[1], rank_num=2, graph_name="Graph 17")
+        if p2: marker_map["그래프17"] = p2
+    return marker_map
+
+# =========================
 # PPT 그림 삽입 유틸
 # =========================
 def _marker_key(text: str) -> str:
@@ -1181,6 +1382,15 @@ def process_graphs(cid_path, asin_path):
     marker_to_path["그래프11"] = create_graph11_itkbn_dashboard(df_asin, df_cid, None, "Graph 11")
     marker_to_path["그래프12"] = create_graph12_top1_category_trends(df_asin, df_cid, "Graph 12")
 
+    # ✅ Top1/Top2 ASIN 텍스트 마커 계산
+    compute_topasin_metrics(df_asin, df_cid)
+    # ✅ Top1/Top2 ASIN 대시보드(그래프16/17)
+    try:
+        top12_map = build_top12_asin_graphs(df_asin, df_cid, top_n=2)
+        marker_to_path.update(top12_map)
+    except Exception as _e:
+        print(f"Top1/Top2 ASIN 그래프 생성 건너뜀: {_e}")
+
     az = col(51); bk = col(63); bv = col(74)
     if d and (az or bk or bv):
         marker_to_path["그래프18"] = create_ads_tacos_graph(dates, d, az, bk, bv, "Graph 18", "Ads Spend / TACOS")
@@ -1222,7 +1432,7 @@ if st.button("🚀 PPT 생성하기", type="primary", disabled=not (cid_up and a
         with open(ppt_path, "wb") as f: f.write(ppt_up.getbuffer())
 
     try:
-        with st.spinner("📈 그래프 생성 중 (1~12, 18~24)..."):
+        with st.spinner("📈 그래프 생성 중 (1~12, 16~17, 18~24)..."):
             marker_to_path, df_cid, df_asin = process_graphs(cid_path, asin_path)
         st.success(f"그래프 생성 완료: {len(marker_to_path)}개")
 
