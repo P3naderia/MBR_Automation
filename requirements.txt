@@ -5,3 +5,4 @@ matplotlib>=3.5.0
 python-pptx>=0.6.21
 openpyxl>=3.0.9
 xlrd>=2.0.1
+fonttools
