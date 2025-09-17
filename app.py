@@ -22,11 +22,8 @@ from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 �
 # =========================
 # Global style / constants
 # =========================
-FONT_PATH = os.path.join("fonts", "KoPubWorld Dotum Light.ttf")
+FONT_PATH = "C:/Windows/Fonts/malgun.ttf"  # Windows: 맑은 고딕 (없으면 기본 폰트 사용)
 
-# matplotlib 전역 폰트 설정
-fontprop = fm.FontProperties(fname=FONT_PATH)
-plt.rc('font', family=fontprop.get_name())
 
 MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
