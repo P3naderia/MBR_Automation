@@ -22,8 +22,8 @@ from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 �
 # =========================
 # Global style / constants
 # =========================
-FONT_PATH = "C:/Windows/Fonts/malgun.ttf"  # Windows: 맑은 고딕 (없으면 기본 폰트 사용)
-MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
+font_path = "fonts/NanumGothic.ttf"
+fontprop = fm.FontProperties(fname=font_path)MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
     "primary": "#2F80ED", "green": "#27AE60", "orange": "#F2994A",
     "purple": "#9B51E0", "red": "#EB5757", "gray": "#BDBDBD", "dark": "#4F4F4F",
