@@ -262,24 +262,25 @@ def _get_topcat_text_marker(marker):
     s = marker.lower().replace(" ", "")
     if "top1category" in s:      return TOPCAT_METRICS.get("top1_category", "N/A")
     if "top1gmsportion" in s:    return fmt_pct(TOPCAT_METRICS.get("top1_portion", np.nan))
-    if "top1gmsgrowth" in s:     return fmt_pct(TOPCAT_METRICS.get("top1_growth", np.nan))
+    if "top1gmsgrowth" in s or "top1monthlygrowth" in s:     # 추가된 조건
+        return fmt_pct(TOPCAT_METRICS.get("top1_growth", np.nan))
     if "top2category" in s:      return TOPCAT_METRICS.get("top2_category", "N/A")
     if "top2gmsportion" in s:    return fmt_pct(TOPCAT_METRICS.get("top2_portion", np.nan))
-    if "top2gmsgrowth" in s:     return fmt_pct(TOPCAT_METRICS.get("top2_growth", np.nan))
+    if "top2gmsgrowth" in s or "top2monthlygrowth" in s:     # 추가된 조건
+        return fmt_pct(TOPCAT_METRICS.get("top2_growth", np.nan))
     return None
-
 # ---------- (ASIN 텍스트 마커: 추가) ----------
 def _norm_colname(s: str) -> str:
     return str(s).lower().replace(" ", "").replace("/", "")
 
 def _get_col_any(df, *names):
-    """df에서 여러 이름 후보 중 존재하는 실제 컬럼명을 찾아 반환(대소문자/공백/슬래시 무시)"""
+    """df에서 여러 이름 후보 중 존재하는 실제 컬럼명을 찾아 반환"""
     norm_map = {_norm_colname(c): c for c in df.columns}
     for nm in names:
         key = _norm_colname(nm)
         if key in norm_map:
             return norm_map[key]
-    raise KeyError(f"columns not found among: {names}")
+    return None  # KeyError 대신 None 반환
 
 def _fmt_or_na(v, dec=1):
     return "N/A" if pd.isna(v) else f"{float(v):.{dec}f}"
@@ -338,6 +339,13 @@ def compute_topasin_metrics(df_asin, df_cid):
         TOPASIN_METRICS[f"top{rank}_portion"] = portion
         TOPASIN_METRICS[f"top{rank}_growth"]  = growth
 
+
+
+
+
+
+
+
 def _get_topasin_text_marker(marker: str):
     """
     PPT 마커 치환:
@@ -361,20 +369,145 @@ def _get_topasin_text_marker(marker: str):
         if s == f"top{r}asingrowth%":
             return fmt_pct(TOPASIN_METRICS.get(f"top{r}_growth", np.nan))
     return None
-
 def extract_value(df, marker):
-    # 1) Top1/Top2 ASIN 텍스트 마커 먼저 처리  ← 추가
+    s = (marker or "").strip().lower()
+    s = s.replace('@', '_')
+    # ===== 1순위: CID 월별 값 마커 (IPI, Excess, WoC, GMS, FBA GMS 등) =====
+    mcid = re.match(r'^(ipi|excess|woc|gms|fbagms|fbagms_pct)_mm(?:-(\d+))?_(\d{4})$', s)
+    if mcid:
+        kind = mcid.group(1)                 
+        back = int(mcid.group(2) or 0)       
+        yreq = int(mcid.group(3))            
+
+        if df[df["year"] == yreq].empty:
+            return "N/A"
+        latest_m = int(df[df["year"] == yreq]["month"].max())
+        ty, tm = month_back(yreq, latest_m, back)
+
+        sub = df[(df["year"] == ty) & (df["month"] == tm)]
+        if sub.empty:
+            return "N/A"
+
+        def _col(*cands):
+            return _get_col_any(df, *cands)
+
+        try:
+            if kind == "ipi":
+                col = _col("IPI Score", "IPI")
+                if not col: return "N/A"
+                val = pd.to_numeric(sub[col], errors='coerce').mean()
+                return "N/A" if pd.isna(val) else f"{val:.0f}"
+
+            if kind == "excess":
+                col = _col("Excess PCT", "Excess", "Excess%")
+                if not col: return "N/A"
+                val = pd.to_numeric(sub[col], errors='coerce').mean()
+                return fmt_pct(val)
+
+            if kind == "woc":
+                col = _col("Avg WOC", "Avg. WoC", "Avg_WoC", "avgwoc", "WoC")
+                if not col: return "N/A"
+                val = pd.to_numeric(sub[col], errors='coerce').mean()
+                return "N/A" if pd.isna(val) else f"{val:.1f}"
+
+            if kind == "gms":
+                col = _col("GMS")
+                if not col: return "N/A"
+                val = pd.to_numeric(sub[col], errors='coerce').sum()
+                return fmt_k(val)
+
+            if kind == "fbagms":
+                col = _col("FBA GMS", "FBA_GMS", "FBA GMS Sales")
+                if not col: return "N/A"
+                val = pd.to_numeric(sub[col], errors='coerce').sum()
+                return fmt_k(val)
+
+            if kind == "fbagms_pct":
+                col_f = _col("FBA GMS", "FBA_GMS", "FBA GMS Sales")
+                col_g = _col("GMS")
+                if not col_f or not col_g: return "N/A"
+                f = pd.to_numeric(sub[col_f], errors='coerce').sum()
+                g = pd.to_numeric(sub[col_g], errors='coerce').sum()
+                pct = (f / g * 100) if g and g > 0 else np.nan
+                return fmt_pct(pct)
+
+        except Exception as e:
+            print(f"CID 마커 처리 오류 {marker}: {e}")
+            return "N/A"
+
+    # ===== 2순위: 프로모션 마커 =====
+    mpromo = re.match(r'^(promo|promo_pct)_mm(?:-(\d+))?_(\d{4})$', s)
+    if mpromo:
+        kind = mpromo.group(1)
+        back = int(mpromo.group(2) or 0)
+        yreq = int(mpromo.group(3))
+
+        if df[df["year"] == yreq].empty:
+            return "N/A"
+        latest_m = int(df[df["year"] == yreq]["month"].max())
+        ty, tm = month_back(yreq, latest_m, back)
+
+        sub = df[(df["year"] == ty) & (df["month"] == tm)]
+        if sub.empty:
+            return "N/A"
+
+        try:
+            total_promo = 0
+            
+            promo_cols = [
+                ("BD OPS", "BDOPS", "Best Deal"),
+                ("LD OPS", "LDOPS", "Lightning Deal"),
+                ("DOTD OPS", "DOTDOPS", "Deal of The Day"),
+                ("Mario OPS", "MarioOPS", "Prime Exclusive"),
+                ("Coupon OPS", "CouponOPS", "Coupon")
+            ]
+            
+            for col_candidates in promo_cols:
+                col = _get_col_any(df, *col_candidates)
+                if col:
+                    val = pd.to_numeric(sub[col], errors='coerce').sum()
+                    total_promo += val if not pd.isna(val) else 0
+
+            if kind == "promo":
+                return fmt_k(total_promo)
+            
+            elif kind == "promo_pct":
+                gms_col = _get_col_any(df, "GMS")
+                if gms_col:
+                    gms = pd.to_numeric(sub[gms_col], errors='coerce').sum()
+                    pct = (total_promo / gms * 100) if gms > 0 else np.nan
+                    return fmt_pct(pct)
+                return "N/A"
+
+        except Exception as e:
+            print(f"프로모션 마커 처리 오류: {e}")
+            return "N/A"
+    
+    # ===== 3순위: 날짜 라벨 전용 =====
+    mdate = re.match(r'^mm(?:-(\d+))?(?:_(\d{4}))?$', s)
+    if mdate:
+        back = int(mdate.group(1) or 0)
+        base_year = int(mdate.group(2)) if mdate.group(2) else int(df['year'].max())
+        if df[df['year'] == base_year].empty:
+            return "N/A"
+        base_month = int(df[df['year'] == base_year]['month'].max())
+        ty, tm = month_back(base_year, base_month, back)
+        return f"{ty}-{tm:02d}"
+    
+    # ===== 4순위: Top ASIN 텍스트 마커 =====
     val_asin = _get_topasin_text_marker(marker)
     if val_asin is not None:
         return val_asin
-    # 2) 기존 Top1/Top2 카테고리 텍스트 마커
+
+    # ===== 5순위: Top Category 텍스트 마커 =====  
     val_top = _get_topcat_text_marker(marker)
     if val_top is not None:
         return val_top
 
-    marker = marker.lower().strip()
+    # ===== 이하 기존 로직 =====
+    marker = s
     year_match = re.search(r"\d{4}", marker)
-    year = int(year_match.group()) if year_match else datetime.now().year
+    year = int(year_match.group()) if year_match else int(df['year'].max())
     if df[df["year"] == year].empty:
         return "N/A"
 
@@ -465,6 +598,8 @@ def extract_value(df, marker):
 
     return "N/A"
 
+
+
 # =========================
 # PPT 텍스트/테이블 치환
 # =========================
@@ -477,17 +612,83 @@ def iter_all_shapes(shapes):
             yield sh
 
 def replace_text_preserve_style(shape, df):
-    if not shape.has_text_frame: return
+    if not shape.has_text_frame:
+        return
+
+    # ---- local helpers (이 함수 안에서만 사용) ----
+    def _norm(s):  # normalize col name
+        return str(s).lower().replace(" ", "").replace("/", "")
+
+    def _find_col_local(d, *cands):
+        mp = {_norm(c): c for c in d.columns}
+        for c in cands:
+            k = _norm(c)
+            if k in mp:
+                return mp[k]
+        return None
+
+    def _compute_conversion(year: int, offset: int = 0):
+        """요청 연도 최신월에서 offset개월 과거로 이동한 달의 (AWAS/BA*100) 반환"""
+        if df[df["year"] == year].empty:
+            return np.nan
+
+        ba_col   = _find_col_local(df, "BA", "Buyable ASIN", "BuyableASIN")
+        awas_col = _find_col_local(df, "AWAS", "AW AS", "AS w/ Sales", "AW w/ Sales",
+                                   "AS with Sales", "AWAS Count")
+        if not ba_col or not awas_col:
+            return np.nan
+
+        latest_m = int(df.loc[df["year"] == year, "month"].max())
+        ty, tm = month_back(year, latest_m, offset)
+
+        sub = df[(df["year"] == ty) & (df["month"] == tm)]
+        if sub.empty:
+            return np.nan
+
+        # "8개" 같은 텍스트도 처리
+        ba   = sub[ba_col].map(lambda v: parse_number_any(v)).sum()
+        awas = sub[awas_col].map(lambda v: parse_number_any(v)).sum()
+
+        return (awas / ba * 100.0) if (pd.notna(ba) and ba > 0) else np.nan
+    # ---------------------------------------------
+
     for paragraph in shape.text_frame.paragraphs:
+        # 현재 문단의 전체 텍스트(겹치는 마커 선치환 위해 run 합침)
         full_text = "".join(run.text for run in paragraph.runs)
+
+        # 1) {awas_mm_YYYY} / {ba_mm_YYYY} 또는 역순  → 해당 연도 최신월 기준 Conversion%
+        for pat in (r"\{awas_mm_(\d{4})\}\s*/\s*\{ba_mm_\1\}",
+                    r"\{ba_mm_(\d{4})\}\s*/\s*\{awas_mm_\1\}"):
+            while True:
+                m = re.search(pat, full_text, flags=re.I)
+                if not m:
+                    break
+                year = int(m.group(1))
+                conv_val = _compute_conversion(year, 0)
+                full_text = full_text[:m.start()] + fmt_pct(conv_val) + full_text[m.end():]
+
+        # 2) {awas_mm-N_YYYY} / {ba_mm-N_YYYY} 또는 역순  → 최신월에서 N개월 전 Conversion%
+        for pat in (r"\{awas_mm-(\d+)_(\d{4})\}\s*/\s*\{ba_mm-\1_\2\}",
+                    r"\{ba_mm-(\d+)_(\d{4})\}\s*/\s*\{awas_mm-\1_\2\}"):
+            while True:
+                m = re.search(pat, full_text, flags=re.I)
+                if not m:
+                    break
+                off = int(m.group(1))
+                year = int(m.group(2))
+                conv_val = _compute_conversion(year, off)
+                full_text = full_text[:m.start()] + fmt_pct(conv_val) + full_text[m.end():]
+
+        # 3) 나머지 {marker}들은 일반 치환 로직으로 처리하기 위해 분해
         parts, last_idx = [], 0
         for match in re.finditer(r"\{([^}]+)\}", full_text):
             marker = match.group(1)
-            parts.append((full_text[last_idx:match.start()], None))
-            parts.append((match.group(0), marker))
+            parts.append((full_text[last_idx:match.start()], None))   # 일반 텍스트
+            parts.append((match.group(0), marker))                    # 마커 텍스트
             last_idx = match.end()
         parts.append((full_text[last_idx:], None))
 
+        # 4) 첫 run 스타일 스냅샷
         first_run = paragraph.runs[0] if paragraph.runs else None
         font_name = first_run.font.name if first_run else "Arial"
         font_size = first_run.font.size if (first_run and first_run.font.size) else Pt(12)
@@ -496,18 +697,22 @@ def replace_text_preserve_style(shape, df):
         underline = first_run.font.underline if first_run else None
         color_snap = _snapshot_color(first_run.font.color) if first_run else {"type": None}
 
+        # 5) 문단 재작성(스타일 유지)
         paragraph.clear()
         for text, marker in parts:
             run = paragraph.add_run()
             run.font.name, run.font.size = font_name, font_size
             run.font.bold, run.font.italic, run.font.underline = bold, italic, underline
             _apply_color(run, color_snap)
+
             if marker:
                 val = extract_value(df, marker)
                 run.text = val
                 run.text = style_percent_text_and_color(run.text, run)
             else:
                 run.text = text
+
+
 
 def process_ppt_markers(prs, df):
     for slide in prs.slides:
@@ -608,6 +813,94 @@ def fill_ytd_table(table, df):
         else:
             for c in (5,6,7,8):
                 write_cell(table.cell(ridx, c), "N/A")
+def build_top10_asin_table(df_asin, df_cid):
+    df = df_asin.copy()
+    df["Month"] = pd.to_datetime(df["Month"], errors="coerce")
+    df = df.dropna(subset=["Month"])
+    asin_col  = _get_col_any(df, "ASIN", "Child ASIN", "ChildASIN")
+    gms_col   = _get_col_any(df, "GMS")
+    gv_col    = _get_col_any(df, "GV")
+    units_col = _get_col_any(df, "Units")
+
+    # 앵커월
+    anchor_dt = pd.to_datetime(df_cid["Month"], errors="coerce").max()
+    cur = df[df["Month"].dt.to_period("M")==anchor_dt.to_period("M")]
+    if cur.empty:
+        cur = df
+        anchor_dt = df["Month"].max()
+
+    total_gms = cur[gms_col].sum()
+
+    # Top10 추출
+    top10 = (cur.groupby(asin_col)[gms_col]
+                .sum()
+                .sort_values(ascending=False)
+                .head(10)
+                .reset_index())
+
+    out = []
+    for _, row in top10.iterrows():
+        asin = row[asin_col]
+        gms  = row[gms_col]
+        portion = gms/total_gms*100 if total_gms>0 else np.nan
+
+        # 전체 데이터 기준 시계열 추출
+        sub = df[df[asin_col]==asin].copy()
+        sub["year"] = sub["Month"].dt.year
+        sub["month"] = sub["Month"].dt.month
+        sub["ASP"] = np.where(sub[units_col]>0, sub[gms_col]/sub[units_col], np.nan)
+        sub["CR"]  = np.where(sub[gv_col]>0, sub[units_col]/sub[gv_col]*100, np.nan)
+        agg = finalize_year_month(sub.groupby(["year","month"])
+                                   .agg(GMS=(gms_col,"sum"),
+                                        GV=(gv_col,"sum"),
+                                        Units=(units_col,"sum"),
+                                        ASP=("ASP","mean"),
+                                        CR=("CR","mean"))
+                                   .reset_index())
+
+        # 최신월과 이전월 비교 (MoM)
+        cur_row = agg[agg["year"]==anchor_dt.year]
+        cur_row = cur_row[cur_row["month"]==anchor_dt.month]
+        prev_row = agg[(agg["year"]==month_back(anchor_dt.year, anchor_dt.month, 1)[0]) &
+                       (agg["month"]==month_back(anchor_dt.year, anchor_dt.month, 1)[1])]
+
+        def pct(cur, prev): return safe_pct(cur, prev) if prev>0 else np.nan
+
+        gms_mom   = pct(cur_row["GMS"].sum(),   prev_row["GMS"].sum()) if not prev_row.empty else np.nan
+        gv_mom    = pct(cur_row["GV"].sum(),    prev_row["GV"].sum()) if not prev_row.empty else np.nan
+        units_mom = pct(cur_row["Units"].sum(), prev_row["Units"].sum()) if not prev_row.empty else np.nan
+        asp_mom   = pct(cur_row["ASP"].mean(),  prev_row["ASP"].mean()) if not prev_row.empty else np.nan
+        cr_mom    = pct(cur_row["CR"].mean(),   prev_row["CR"].mean()) if not prev_row.empty else np.nan
+
+        # YoY
+        prev_y = anchor_dt.year-1
+        prev_row_y = agg[(agg["year"]==prev_y) & (agg["month"]==anchor_dt.month)]
+        gms_yoy   = pct(cur_row["GMS"].sum(),   prev_row_y["GMS"].sum()) if not prev_row_y.empty else np.nan
+        gv_yoy    = pct(cur_row["GV"].sum(),    prev_row_y["GV"].sum()) if not prev_row_y.empty else np.nan
+        units_yoy = pct(cur_row["Units"].sum(), prev_row_y["Units"].sum()) if not prev_row_y.empty else np.nan
+        asp_yoy   = pct(cur_row["ASP"].mean(),  prev_row_y["ASP"].mean()) if not prev_row_y.empty else np.nan
+        cr_yoy    = pct(cur_row["CR"].mean(),   prev_row_y["CR"].mean()) if not prev_row_y.empty else np.nan
+
+        out.append([asin, gms, portion, 
+                    cur_row["GV"].sum(), cur_row["Units"].sum(),
+                    cur_row["ASP"].mean(), cur_row["CR"].mean(),
+                    gms_mom, gv_mom, units_mom, asp_mom, cr_mom,
+                    gms_yoy, gv_yoy, units_yoy, asp_yoy, cr_yoy])
+    return pd.DataFrame(out, columns=["ASIN","GMS","GMS%","GV","Units","ASP","CR",
+                                      "GMS MoM","GV MoM","Units MoM","ASP MoM","CR MoM",
+                                      "GMS YoY","GV YoY","Units YoY","ASP YoY","CR YoY"])
+
+def fill_top10_asin_table(prs, df_asin, df_cid):
+    table_df = build_top10_asin_table(df_asin, df_cid)
+    for slide in prs.slides:
+        title = find_title_shape(slide, r"Top10\s*Child\s*ASIN")
+        if not title: continue
+        table = nearest_table(slide, title)
+        if not table: continue
+        for r, (_, row) in enumerate(table_df.iterrows(), start=1):  # 첫 행은 헤더니까 row=1부터
+            for c, val in enumerate(row):
+                write_cell(table.cell(r, c), fmt_pct(val) if isinstance(val,float) and "pct" in table_df.columns[c].lower() else str(round(val,2) if isinstance(val,float) else val))
+
 
 def fill_ytd_table_on_slides(prs, df):
     count = 0
@@ -621,6 +914,7 @@ def fill_ytd_table_on_slides(prs, df):
         except Exception as e:
             print(f"YTD 테이블 채우기 실패: {e}")
     return count
+
 
 # =========================
 # 그래프 생성 (원본 로직 준수)
@@ -653,36 +947,72 @@ def create_line_by_year(dates, values, title, y_label, graph_name,
     return _save_fig(fig, graph_name)
 
 def create_combo_ba_awagv_awas(dates, ba_values, awagv_values, awas_values, graph_name, title):
+    # 월별 BA 막대 + Discoverability(= AWAGV/BA %) / Conversion(= AWAS/BA %) 라인
     rows=[]; n=len(dates)
     for i in range(n):
         dt = parse_date_any(dates[i])
-        if dt is None: continue
-        ba   = parse_number_any(ba_values[i]) if i<len(ba_values) else None
-        awag = parse_number_any(avag:=awagv_values[i]) if i<len(awagv_values) else None  # noqa
-        awas = parse_number_any(awas_values[i]) if i<len(awas_values) else None
-        if ba is None or ba <= 0: continue
-        disc = (awag/ba*100) if awag is not None else np.nan
-        conv = (awas/ba*100) if awas is not None else np.nan
-        rows.append({"year":dt.year,"month":dt.month,"ba":ba,"disc":disc,"conv":conv})
-    if not rows: return None
-    df = pd.DataFrame(rows).groupby(["year","month"]).mean().reset_index()
+        if dt is None: 
+            continue
+        ba   = parse_number_any(ba_values[i])    if i < len(ba_values)    else None
+        awag = parse_number_any(awagv_values[i]) if i < len(awagv_values) else None
+        awas = parse_number_any(awas_values[i])  if i < len(awas_values)  else None
+        if ba is None or ba <= 0:
+            continue
+        disc = (awag/ba*100) if awag is not None else np.nan   # Discoverability %
+        conv = (awas/ba*100) if awas is not None else np.nan   # Conversion %
+        rows.append({"year": dt.year, "month": dt.month, "ba": ba, "disc": disc, "conv": conv})
+
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows).groupby(["year","month"]).mean(numeric_only=True).reset_index()
     df = finalize_year_month(df, "year", "month")
+
     _set_korean_font_if_possible()
     fig = plt.figure(figsize=(10, 6)); ax1 = plt.gca(); _bi_theme(ax1)
+
     x = np.arange(len(df))
+
+    # BA 막대
     bars = ax1.bar(x, df["ba"], alpha=0.9, color=PALETTE["ba_fill"], label="BA")
     ax1.set_ylabel("취급 상품 개수 (개)", color=PALETTE["dark"])
+
+    # 보조축 라인들
     ax2 = ax1.twinx(); _bi_theme(ax2); ax2.set_yticks([])
-    ax2.plot(x, df["disc"], "o-", linewidth=2.5, color=PALETTE["primary"])
-    ax2.plot(x, df["conv"], "s-", linewidth=2.5, color=PALETTE["orange"])
-    if pd.notna(df["conv"].iloc[-1]):
-        _label_last(ax2, x, df["conv"].to_numpy(), f"{df['conv'].iloc[-1]:.1f}%")
+    line_disc, = ax2.plot(x, df["disc"], "o-", linewidth=2.5, color=PALETTE["primary"],
+                          label="Discoverability (AWAGV/BA%)")
+    line_conv, = ax2.plot(x, df["conv"], "s-", linewidth=2.5, color=PALETTE["orange"],
+                          label="Conversion (AWAS/BA%)")
+
+    # ---------- Conversion 데이터 라벨: 2025년만 ----------
+    target_year = 2025
+    if target_year not in set(df["year"].astype(int)):
+        # 만약 2025 데이터가 없다면 최신 연도만 표시(겹침 방지 목적 유지)
+        target_year = int(df["year"].max())
+
+    y_conv = df["conv"].to_numpy()
+    for i in range(len(df)):
+        if int(df.loc[i, "year"]) != target_year or pd.isna(y_conv[i]):
+            continue
+        # 주변 포인트와 겹치지 않게 위/아래로 번갈아 배치
+        dy = 8 if (i % 2 == 0) else -10
+        va = "bottom" if dy > 0 else "top"
+        ax2.annotate(f"{y_conv[i]:.1f}%", (x[i], y_conv[i]),
+                     textcoords="offset points", xytext=(0, dy),
+                     ha="center", va=va, fontsize=8)
+
+    # 제목/축/범례
     ax1.set_title(title, fontsize=16, color=PALETTE["dark"])
     ax1.set_xlabel("연월", color=PALETTE["dark"])
     ax1.set_xticks(x); ax1.set_xticklabels(df["date_str"], rotation=45, ha="right")
-    ax1.legend([bars], ["BA"], loc="upper left", fontsize=9, frameon=False)
+    ax1.legend([bars, line_disc, line_conv],
+               ["BA", "Discoverability (AWAGV/BA%)", "Conversion (AWAS/BA%)"],
+               loc="upper left", fontsize=9, frameon=False)
+
     fig.tight_layout()
     return _save_fig(fig, graph_name)
+
+
 
 def create_ipi_combo_graph(dates, ipi_values, excess_pct_values, graph_name, title):
     rows = []
@@ -1201,6 +1531,92 @@ def create_graph12_top1_category_trends(df_asin, df_cid, graph_name="Graph 12"):
     fig.tight_layout(rect=[0,0,1,0.93])
     return _save_fig(fig, graph_name)
 
+
+
+def create_graph13_top2_category_trends(df_asin, df_cid, graph_name="Graph 13"):
+    def _get_col_safe(df, name):
+        key = name.lower().replace(" ", "").replace("/", "")
+        for c in df.columns:
+            cc = str(c).lower().replace(" ", "").replace("/", "")
+            if cc == key: return c
+        raise KeyError(f"'{name}' 컬럼을 찾을 수 없습니다.")
+
+    anchor = pd.to_datetime(df_cid["Month"], errors="coerce").max()
+    if "Month" not in df_asin.columns:
+        return None
+
+    df_a = df_asin.copy()
+    df_a["Month"] = pd.to_datetime(df_a["Month"], errors="coerce")
+    df_a = df_a.dropna(subset=["Month"])
+
+    col_itkbn = _get_col_safe(df_a, "ITK/BN")
+    col_asin  = _get_col_safe(df_a, "ASIN")
+    col_gms   = _get_col_safe(df_a, "GMS")
+    col_gv    = _get_col_safe(df_a, "GV")
+    col_units = _get_col_safe(df_a, "Units")
+
+    cur = df_a[df_a["Month"].dt.to_period("M")==anchor.to_period("M")]
+    if cur.empty: cur = df_a
+    g_by = cur.groupby(col_itkbn, dropna=False)[col_gms].sum().sort_values(ascending=False)
+    if len(g_by) < 2:
+        return None
+    top2 = g_by.index[1]
+    sub = df_a[df_a[col_itkbn]==top2].copy()
+
+    sub = df_a[df_a[col_itkbn]==top2].copy()
+    sub["year"]  = sub["Month"].dt.year
+    sub["month"] = sub["Month"].dt.month
+    sub["BA_flag"] = (sub[col_units].fillna(0) > 0) | (sub[col_gms].fillna(0) > 0)
+    agg = sub.groupby(["year","month"]).agg(
+        GMS   =(col_gms,"sum"),
+        GV    =(col_gv,"sum"),
+        Units =(col_units,"sum"),
+        BA    =(col_asin, lambda s: s[sub.loc[s.index,"BA_flag"]].nunique())
+    ).reset_index()
+    if agg.empty: return None
+    agg["ASP"] = np.where(agg["Units"]>0, agg["GMS"]/agg["Units"], np.nan)
+    agg["CR"]  = np.where(agg["GV"]>0,    agg["Units"]/agg["GV"]*100, np.nan)
+    agg = finalize_year_month(agg, "year", "month")
+
+    _set_korean_font_if_possible()
+    fig, axes = plt.subplots(2,3, figsize=(19.2,10.8))
+    fig.patch.set_facecolor("white")
+    banner = fig.add_axes([0, 0.93, 1, 0.07])
+    banner.set_facecolor("#0F6CBD"); banner.set_xticks([]); banner.set_yticks([])
+    banner.text(0.5, 0.5, f"Top 2 카테고리 주요 지표 트렌드  •  {top2}",
+                ha="center", va="center", color="white", fontsize=18, fontweight="bold")
+
+    def draw_metric(ax, df, value_col, title, yfmt="raw", dec=1):
+        _bi_theme(ax)
+        years = sorted(df["year"].unique())
+        hi_year = max(years)
+        colors = {y: ("#F2B233" if y==hi_year else "#BDBDBD") for y in years}
+        for y in years:
+            suby = df[df["year"]==y].sort_values("month")
+            x = suby["month"].to_numpy(); yv = suby[value_col].to_numpy()
+            ax.plot(x, yv, marker="o", linewidth=2.2, color=colors[y], label=str(y))
+            if y==hi_year and len(yv)>0 and pd.notna(yv[-1]):
+                if yfmt=="k": txt = f"{yv[-1]/1000:.1f}K"
+                elif yfmt=="pct": txt = f"{yv[-1]:.{dec}f}%"
+                elif yfmt=="int": txt = f"{int(round(yv[-1]))}"
+                else: txt = f"{yv[-1]:.{dec}f}"
+                _label_last(ax, x, yv, txt, dy=8)
+        ax.set_title(title, fontsize=14, color=PALETTE["dark"])
+        ax.set_xticks(range(1,13)); ax.set_xlim(1,12)
+        if yfmt=="k": ax.yaxis.set_major_formatter(_yfmt_k(dec))
+        elif yfmt=="pct": ax.yaxis.set_major_formatter(_yfmt_decimal(dec, "%"))
+        elif yfmt=="int": ax.yaxis.set_major_formatter(_yfmt_decimal(0, ""))        
+        ax.legend(loc="upper left", fontsize=9, frameon=False)
+
+    draw_metric(axes[0,0], agg, "GMS",   "매출",      yfmt="k",   dec=1)
+    draw_metric(axes[0,1], agg, "GV",    "고객 유입", yfmt="k",   dec=1)
+    draw_metric(axes[0,2], agg, "Units", "판매 수량", yfmt="k",   dec=1)
+    draw_metric(axes[1,0], agg, "BA",    "판매 상품 개수", yfmt="int", dec=0)
+    draw_metric(axes[1,1], agg, "ASP",   "판매 객단가", yfmt="raw", dec=2)
+    draw_metric(axes[1,2], agg, "CR",    "구매 전환율", yfmt="pct", dec=1)
+
+    fig.tight_layout(rect=[0,0,1,0.93])
+    return _save_fig(fig, graph_name)
 # =========================
 # 그래프 16/17: Top1/Top2 Child ASIN 대시보드 (추가)
 # =========================
@@ -1381,6 +1797,7 @@ def process_graphs(cid_path, asin_path):
 
     marker_to_path["그래프11"] = create_graph11_itkbn_dashboard(df_asin, df_cid, None, "Graph 11")
     marker_to_path["그래프12"] = create_graph12_top1_category_trends(df_asin, df_cid, "Graph 12")
+    marker_to_path["그래프13"] = create_graph13_top2_category_trends(df_asin, df_cid, "Graph 13")
 
     # ✅ Top1/Top2 ASIN 텍스트 마커 계산
     compute_topasin_metrics(df_asin, df_cid)
@@ -1438,14 +1855,21 @@ if st.button("🚀 PPT 생성하기", type="primary", disabled=not (cid_up and a
 
         with st.spinner("🖼 PPT 템플릿에 그래프 자동 삽입 중..."):
             updated_ppt_path, placed = insert_graphs_by_markers(ppt_path, marker_to_path)
-
-        with st.spinner("🔤 텍스트/표 마커 치환 + YTD 테이블 채우는 중..."):
+        with st.spinner("🔤 텍스트/표 마커 치환 + YTD 테이블 + Top10 ASIN 테이블 채우는 중..."):
             prs = Presentation(updated_ppt_path)
             process_ppt_markers(prs, df_cid)
             ytd_cnt = fill_ytd_table_on_slides(prs, df_cid)
+        
+            # ✅ Top10 Child ASIN 테이블 채우기
+            try:
+                fill_top10_asin_table(prs, df_asin, df_cid)
+                st.success("Top10 Child ASIN 테이블 채움 완료")
+            except Exception as e:
+                st.error(f"Top10 ASIN 테이블 채우기 실패: {e}")
+        
             final_path = os.path.join(GRAPH_ROOT, f"Filled_{os.path.basename(ppt_path)}")
             prs.save(final_path)
-
+        
         st.success(f"완료! 그래프 삽입 {placed}개, YTD 테이블 {ytd_cnt}개 채움.")
         with open(final_path, "rb") as f:
             st.download_button(
