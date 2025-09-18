@@ -11,6 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import streamlit as st
+import urllib.request
 
 # python-pptx
 from pptx import Presentation
@@ -19,40 +20,39 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
+
+
+def download_and_setup_font():
+    # 나눔고딕 폰트 다운로드
+    font_url = "https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf"
+    font_path = "NanumGothic.ttf"
+    
+    # 폰트 파일이 없으면 다운로드
+    if not os.path.exists(font_path):
+        urllib.request.urlretrieve(font_url, font_path)
+    
+    # 폰트 등록
+    fm.fontManager.addfont(font_path)
+    font_prop = fm.FontProperties(fname=font_path)
+    
+    # matplotlib에 폰트 설정
+    plt.rc('font', family=font_prop.get_name())
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    return font_prop.get_name()
+
+# 폰트 설정 실행
+try:
+    font_name = download_and_setup_font()
+    print(f"Font loaded: {font_name}")
+except Exception as e:
+    print(f"Font loading failed: {e}")
+    plt.rc('font', family='DejaVu Sans')
 # =========================
 # Global style / constants
 # =========================
 # 상단에 FONT_PATH 정의 추가
-FONT_PATH = None  # 또는 제거
 
-def _set_korean_font_if_possible():
-    # 이미 전역 설정했으므로 추가 작업 불필요
-    pass
-
-
-
-def set_matplotlib_font():
-    # 사용 가능한 한글 폰트 확인
-    font_list = [f.name for f in fm.fontManager.ttflist]
-    
-    # 우선순위별로 폰트 시도
-    korean_fonts = ['NanumGothic', 'NanumBarunGothic', 'Noto Sans CJK KR', 
-                    'Malgun Gothic', 'AppleGothic', 'DejaVu Sans']
-    
-    for font in korean_fonts:
-        if font in font_list:
-            plt.rc('font', family=font)
-            print(f"Using font: {font}")
-            break
-    else:
-        # 한글 폰트가 없으면 DejaVu Sans 사용 (기본)
-        plt.rc('font', family='DejaVu Sans')
-        print("Warning: Korean font not found, using DejaVu Sans")
-    
-    plt.rcParams['axes.unicode_minus'] = False
-
-# 폰트 설정 적용
-set_matplotlib_font()
 
 MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
