@@ -22,6 +22,15 @@ from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 �
 # =========================
 # Global style / constants
 # =========================
+# 상단에 FONT_PATH 정의 추가
+FONT_PATH = None  # 또는 제거
+
+def _set_korean_font_if_possible():
+    # 이미 전역 설정했으므로 추가 작업 불필요
+    pass
+
+
+
 def set_matplotlib_font():
     # 사용 가능한 한글 폰트 확인
     font_list = [f.name for f in fm.fontManager.ttflist]
