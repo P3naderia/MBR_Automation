@@ -22,18 +22,28 @@ from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 �
 # =========================
 # Global style / constants
 # =========================
-import platform
-
-if platform.system() == 'Windows':
-    plt.rc('font', family='Malgun Gothic')
-elif platform.system() == 'Darwin':  # macOS
-    plt.rc('font', family='AppleGothic')
-else:  # Linux/Streamlit Cloud
-    # Streamlit Cloud는 대부분 Linux 환경
-    plt.rc('font', family='DejaVu Sans')
+def set_matplotlib_font():
+    # 사용 가능한 한글 폰트 확인
+    font_list = [f.name for f in fm.fontManager.ttflist]
     
-# 마이너스 기호 깨짐 방지
-plt.rcParams['axes.unicode_minus'] = False
+    # 우선순위별로 폰트 시도
+    korean_fonts = ['NanumGothic', 'NanumBarunGothic', 'Noto Sans CJK KR', 
+                    'Malgun Gothic', 'AppleGothic', 'DejaVu Sans']
+    
+    for font in korean_fonts:
+        if font in font_list:
+            plt.rc('font', family=font)
+            print(f"Using font: {font}")
+            break
+    else:
+        # 한글 폰트가 없으면 DejaVu Sans 사용 (기본)
+        plt.rc('font', family='DejaVu Sans')
+        print("Warning: Korean font not found, using DejaVu Sans")
+    
+    plt.rcParams['axes.unicode_minus'] = False
+
+# 폰트 설정 적용
+set_matplotlib_font()
 
 MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
