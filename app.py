@@ -20,52 +20,46 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
-@st.cache_data
-def setup_korean_font():
-    """한글 폰트 다운로드 및 설정"""
+@st.cache_resource
+def setup_matplotlib_korean():
+    """한글 폰트 설정 - 더 확실한 방법"""
+    # 나눔고딕 폰트 URL
     font_url = "https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf"
+    font_path = "/tmp/NanumGothic.ttf"
     
-    # Streamlit Cloud에서는 /tmp 디렉토리 사용
-    font_dir = "/tmp/fonts"
-    os.makedirs(font_dir, exist_ok=True)
-    font_path = os.path.join(font_dir, "NanumGothic.ttf")
-    
-    # 폰트 파일이 없으면 다운로드
+    # 폰트 다운로드
     if not os.path.exists(font_path):
-        print(f"Downloading font to {font_path}...")
-        try:
-            urllib.request.urlretrieve(font_url, font_path)
-            print("Font downloaded successfully")
-        except Exception as e:
-            print(f"Font download failed: {e}")
-            return False
+        urllib.request.urlretrieve(font_url, font_path)
     
-    # 폰트 매니저 초기화
+    # 폰트 매니저 캐시 초기화
+    fm._rebuild()
+    
+    # 폰트 추가 및 등록
     fm.fontManager.addfont(font_path)
     
-    # 폰트 속성 설정
+    # 폰트 프로퍼티 생성
     font_prop = fm.FontProperties(fname=font_path)
-    font_name = font_prop.get_name()
     
-    # matplotlib 전역 설정
-    plt.rcParams['font.family'] = font_name
-    plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
+    # matplotlib rc 파라미터 직접 설정
+    plt.rcParams['font.family'] = font_prop.get_name()
+    plt.rcParams['font.sans-serif'] = [font_prop.get_name()] + plt.rcParams['font.sans-serif']
     plt.rcParams['axes.unicode_minus'] = False
     
-    print(f"Font set to: {font_name}")
-    return True
+    # 추가 설정
+    import matplotlib as mpl
+    mpl.font_manager.fontManager.addfont(font_path)
+    
+    return font_prop
 
-# 앱 시작 시 폰트 설정 실행
-font_loaded = setup_korean_font()
-if not font_loaded:
-    st.warning("한글 폰트 로드 실패. 그래프의 한글이 깨질 수 있습니다.")
+# 폰트 설정 실행
+font_prop = setup_matplotlib_korean()
 
+# 전역 변수로 폰트 프로퍼티 저장
+FONT_PROP = font_prop
 
 # =========================
 # Global style / constants
-def _set_korean_font_if_possible():
-    # 이미 전역에서 설정했으므로 pass
-    pass
+
 # =========================
 # 상단에 FONT_PATH 정의 추가
 
@@ -101,13 +95,10 @@ ppt_up = st.file_uploader("📄 PowerPoint 템플릿 (.pptx)", type=["pptx"], ke
 # 공통 유틸
 # =========================
 def _set_korean_font_if_possible():
-    try:
-        if os.path.exists(FONT_PATH):
-            font_prop = fm.FontProperties(fname=FONT_PATH)
-            plt.rcParams['font.family'] = font_prop.get_name()
-    except:
-        pass
-
+    """각 그래프 생성 시 폰트 재설정"""
+    if 'FONT_PROP' in globals():
+        plt.rcParams['font.family'] = FONT_PROP.get_name()
+        plt.rcParams['axes.unicode_minus'] = False
 def ensure_graphs_folder() -> str:
     base = GRAPH_ROOT if GRAPH_ROOT else os.getcwd()
     graphs_folder = os.path.join(base, "graphs")
