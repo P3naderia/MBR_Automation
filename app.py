@@ -21,12 +21,6 @@ from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
 
-# 폰트 설정 실행
-font_prop = setup_matplotlib_korean()
-
-# 전역 변수로 폰트 프로퍼티 저장
-FONT_PROP = font_prop
-
 # =========================
 # Global style / constants
 
