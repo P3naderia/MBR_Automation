@@ -22,8 +22,18 @@ from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 �
 # =========================
 # Global style / constants
 # =========================
-plt.rc('font', family='NanumGothic')  # 또는 'DejaVu Sans'
+import platform
 
+if platform.system() == 'Windows':
+    plt.rc('font', family='Malgun Gothic')
+elif platform.system() == 'Darwin':  # macOS
+    plt.rc('font', family='AppleGothic')
+else:  # Linux/Streamlit Cloud
+    # Streamlit Cloud는 대부분 Linux 환경
+    plt.rc('font', family='DejaVu Sans')
+    
+# 마이너스 기호 깨짐 방지
+plt.rcParams['axes.unicode_minus'] = False
 
 MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
