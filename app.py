@@ -20,36 +20,52 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
-
-
-def download_and_setup_font():
-    # 나눔고딕 폰트 다운로드
+@st.cache_data
+def setup_korean_font():
+    """한글 폰트 다운로드 및 설정"""
     font_url = "https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf"
-    font_path = "NanumGothic.ttf"
+    
+    # Streamlit Cloud에서는 /tmp 디렉토리 사용
+    font_dir = "/tmp/fonts"
+    os.makedirs(font_dir, exist_ok=True)
+    font_path = os.path.join(font_dir, "NanumGothic.ttf")
     
     # 폰트 파일이 없으면 다운로드
     if not os.path.exists(font_path):
-        urllib.request.urlretrieve(font_url, font_path)
+        print(f"Downloading font to {font_path}...")
+        try:
+            urllib.request.urlretrieve(font_url, font_path)
+            print("Font downloaded successfully")
+        except Exception as e:
+            print(f"Font download failed: {e}")
+            return False
     
-    # 폰트 등록
+    # 폰트 매니저 초기화
     fm.fontManager.addfont(font_path)
-    font_prop = fm.FontProperties(fname=font_path)
     
-    # matplotlib에 폰트 설정
-    plt.rc('font', family=font_prop.get_name())
+    # 폰트 속성 설정
+    font_prop = fm.FontProperties(fname=font_path)
+    font_name = font_prop.get_name()
+    
+    # matplotlib 전역 설정
+    plt.rcParams['font.family'] = font_name
+    plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False
     
-    return font_prop.get_name()
+    print(f"Font set to: {font_name}")
+    return True
 
-# 폰트 설정 실행
-try:
-    font_name = download_and_setup_font()
-    print(f"Font loaded: {font_name}")
-except Exception as e:
-    print(f"Font loading failed: {e}")
-    plt.rc('font', family='DejaVu Sans')
+# 앱 시작 시 폰트 설정 실행
+font_loaded = setup_korean_font()
+if not font_loaded:
+    st.warning("한글 폰트 로드 실패. 그래프의 한글이 깨질 수 있습니다.")
+
+
 # =========================
 # Global style / constants
+def _set_korean_font_if_possible():
+    # 이미 전역에서 설정했으므로 pass
+    pass
 # =========================
 # 상단에 FONT_PATH 정의 추가
 
