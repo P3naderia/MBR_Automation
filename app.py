@@ -11,7 +11,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import streamlit as st
-import urllib.request
 
 # python-pptx
 from pptx import Presentation
@@ -20,14 +19,10 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
-
 # =========================
 # Global style / constants
-
 # =========================
-# 상단에 FONT_PATH 정의 추가
-
-
+FONT_PATH = "C:/Windows/Fonts/malgun.ttf"  # Windows: 맑은 고딕 (없으면 기본 폰트 사용)
 MONTH_LABELS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 PALETTE = {
     "primary": "#2F80ED", "green": "#27AE60", "orange": "#F2994A",
@@ -59,10 +54,13 @@ ppt_up = st.file_uploader("📄 PowerPoint 템플릿 (.pptx)", type=["pptx"], ke
 # 공통 유틸
 # =========================
 def _set_korean_font_if_possible():
-    """각 그래프 생성 시 폰트 재설정"""
-    if 'FONT_PROP' in globals():
-        plt.rcParams['font.family'] = FONT_PROP.get_name()
-        plt.rcParams['axes.unicode_minus'] = False
+    try:
+        if os.path.exists(FONT_PATH):
+            font_prop = fm.FontProperties(fname=FONT_PATH)
+            plt.rcParams['font.family'] = font_prop.get_name()
+    except:
+        pass
+
 def ensure_graphs_folder() -> str:
     base = GRAPH_ROOT if GRAPH_ROOT else os.getcwd()
     graphs_folder = os.path.join(base, "graphs")
@@ -375,7 +373,7 @@ def extract_value(df, marker):
     s = (marker or "").strip().lower()
     s = s.replace('@', '_')
     # ===== 1순위: CID 월별 값 마커 (IPI, Excess, WoC, GMS, FBA GMS 등) =====
-    mcid = re.match(r'^(ipi|excess|woc|gms|fbagms|fbagms_pct)_mm(?:-(\d+))?_(\d{4})$', s)
+    mcid = re.match(r'^(ipi|excess|woc|gms|fbagms|fbagms_pct|spspend|sbspend|sdspend|spclicks|sbclicks|sdclicks)_mm(?:-(\d+))?_(\d{4})$', s)
     if mcid:
         kind = mcid.group(1)                 
         back = int(mcid.group(2) or 0)       
@@ -432,6 +430,41 @@ def extract_value(df, marker):
                 g = pd.to_numeric(sub[col_g], errors='coerce').sum()
                 pct = (f / g * 100) if g and g > 0 else np.nan
                 return fmt_pct(pct)
+            if kind in ["spspend", "sbspend", "sdspend"]:
+                col_map = {
+                    "spspend": ["SP Spend", "spend_sp", "SP_광고비"],
+                    "sbspend": ["SB Spend", "spend_sb", "SB_광고비"],
+                    "sdspend": ["SD Spend", "spend_sd", "SD_광고비"]
+                }
+
+                col = _col(*col_map[kind])
+                if not col:
+                    return "0K"   # 없으면 0
+                val = pd.to_numeric(sub[col], errors='coerce').sum()
+                return fmt_k(val) if not pd.isna(val) else "0K"
+            
+                        # --- 광고 클릭 수 (SP / SB / SD) ---
+            if kind == "spclicks":
+                col = _col("SP Clicks", "SP_Clicks")
+                if not col: 
+                    return "0K"
+                val = pd.to_numeric(sub[col], errors="coerce").sum()
+                return fmt_k(val)
+
+            if kind == "sbclicks":
+                col = _col("SB Clicks", "SB_Clicks")
+                if not col: 
+                    return "0K"
+                val = pd.to_numeric(sub[col], errors="coerce").sum()
+                return fmt_k(val)
+
+            if kind == "sdclicks":
+                col = _col("SD Clicks", "SD_Clicks")
+                if not col: 
+                    return "0K"
+                val = pd.to_numeric(sub[col], errors="coerce").sum()
+                return fmt_k(val)
+
 
         except Exception as e:
             print(f"CID 마커 처리 오류 {marker}: {e}")
