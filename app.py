@@ -20,36 +20,6 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
-@st.cache_resource
-def setup_matplotlib_korean():
-    """한글 폰트 설정 - 더 확실한 방법"""
-    # 나눔고딕 폰트 URL
-    font_url = "https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf"
-    font_path = "/tmp/NanumGothic.ttf"
-    
-    # 폰트 다운로드
-    if not os.path.exists(font_path):
-        urllib.request.urlretrieve(font_url, font_path)
-    
-    # 폰트 매니저 캐시 초기화
-    fm._rebuild()
-    
-    # 폰트 추가 및 등록
-    fm.fontManager.addfont(font_path)
-    
-    # 폰트 프로퍼티 생성
-    font_prop = fm.FontProperties(fname=font_path)
-    
-    # matplotlib rc 파라미터 직접 설정
-    plt.rcParams['font.family'] = font_prop.get_name()
-    plt.rcParams['font.sans-serif'] = [font_prop.get_name()] + plt.rcParams['font.sans-serif']
-    plt.rcParams['axes.unicode_minus'] = False
-    
-    # 추가 설정
-    import matplotlib as mpl
-    mpl.font_manager.fontManager.addfont(font_path)
-    
-    return font_prop
 
 # 폰트 설정 실행
 font_prop = setup_matplotlib_korean()
