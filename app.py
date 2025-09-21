@@ -19,7 +19,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR  # ← 색상 안전 처리용
 
-font_path = "./fonts/KoPubWorld Batang Bold.ttf"
+font_path = "KoPubWorld Batang Bold.ttf"
 fontprop = fm.FontProperties(fname=font_path)
 plt.rc('font', family=fontprop.get_name())
 
